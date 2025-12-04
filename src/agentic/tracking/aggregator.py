@@ -17,6 +17,7 @@ from agentic.tracking.browser_tracker import BrowserTracker
 from agentic.tracking.window_tracker import WindowTracker
 from agentic.tracking.vscode_tracker import VSCodeTracker
 from agentic.tracking.context_builder import ContextBuilder, ProjectDetector
+from agentic.tracking.screen_reader import ScreenReader, get_screen_reader
 
 
 class ActivityAggregator:
@@ -28,6 +29,7 @@ class ActivityAggregator:
         enable_browser: bool = True,
         enable_window: bool = True,
         enable_vscode: bool = True,
+        enable_screen_reader: bool = True,
         max_events_in_memory: int = 1000,
         memory_store_callback: Optional[Callable] = None,
         memory_search_callback: Optional[Callable] = None,
@@ -38,6 +40,8 @@ class ActivityAggregator:
         self._events: list[ActivityEvent] = []
         self._max_events = max_events_in_memory
         self._running = False
+        self.enable_screen_reader = enable_screen_reader
+        self._screen_reader: Optional[ScreenReader] = None
         
         # Initialize context builder
         self.context_builder = ContextBuilder(
@@ -383,8 +387,47 @@ class ActivityAggregator:
         
         question_lower = question.lower()
         
+        # Read what's on screen / what am I seeing / what's on my screen
+        if any(w in question_lower for w in ["see on", "seeing", "on my screen", "read screen", "what's on screen", 
+                                               "screen shows", "looking at", "displayed", "showing"]):
+            if self.enable_screen_reader:
+                if not self._screen_reader:
+                    self._screen_reader = get_screen_reader()
+                try:
+                    screen_text = await self._screen_reader.get_screen_summary(max_chars=3000)
+                    if screen_text and screen_text != "Could not read screen content.":
+                        # Get window context too
+                        window_info = ""
+                        if self.window_tracker:
+                            activity = await self.window_tracker.get_current_activity()
+                            if activity:
+                                window_info = f"**{activity.application}**"
+                                if activity.title:
+                                    window_info += f" - {activity.title}"
+                        
+                        response = f"📺 Currently viewing: {window_info}\n\n"
+                        response += f"**Screen Content:**\n```\n{screen_text}\n```"
+                        return response
+                except Exception as e:
+                    return f"Error reading screen: {e}"
+            return "Screen reading not enabled."
+        
+        # Which window/app am I on?
+        if any(w in question_lower for w in ["window", "app", "application", "screen", "where am i", "browser"]):
+            if self.window_tracker:
+                activity = await self.window_tracker.get_current_activity()
+                if activity:
+                    response = f"You're currently in **{activity.application}**"
+                    if activity.title:
+                        response += f"\n📄 Tab/Window: {activity.title}"
+                    if activity.url:
+                        response += f"\n🔗 URL: {activity.url}"
+                    response += f"\n(Category: {activity.category.value})"
+                    return response
+            return "Couldn't detect current window."
+        
         # What am I working on?
-        if any(w in question_lower for w in ["working on", "doing", "current"]):
+        if any(w in question_lower for w in ["working on", "doing", "current", "building"]):
             context = await self.get_current_context()
             
             parts = []

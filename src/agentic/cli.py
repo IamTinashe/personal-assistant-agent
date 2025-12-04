@@ -267,5 +267,57 @@ def serve(
         print_error("FastAPI/Uvicorn not installed. Install with: pip install agentic[web]")
 
 
+@app.command()
+def overlay(
+    demo: bool = typer.Option(
+        False,
+        "--demo",
+        "-d",
+        help="Run in demo mode without assistant",
+    ),
+    no_hotkey: bool = typer.Option(
+        False,
+        "--no-hotkey",
+        help="Disable global hotkey (use if getting permission errors)",
+    ),
+) -> None:
+    """
+    Launch floating overlay assistant.
+    
+    A small always-on-top window that follows you everywhere.
+    Minimize to a floating button, expand to chat.
+    
+    Use --no-hotkey if you get accessibility permission errors on macOS.
+    """
+    try:
+        from agentic.overlay.app import OverlayApp
+    except ImportError:
+        print_error("PyQt6 not installed. Install with: pip install PyQt6")
+        return
+    
+    assistant = None
+    
+    if not demo:
+        console.print("[bold]Initializing assistant...[/bold]")
+        try:
+            # Initialize assistant synchronously for the overlay
+            from agentic.app import Assistant
+            import asyncio
+            
+            async def init_assistant():
+                assistant = Assistant()
+                await assistant.initialize()
+                return assistant
+            
+            assistant = asyncio.run(init_assistant())
+            console.print("[green]Assistant ready![/green]")
+        except Exception as e:
+            console.print(f"[yellow]Running in demo mode: {e}[/yellow]")
+    
+    console.print("[bold]Launching overlay...[/bold]")
+    overlay_app = OverlayApp(assistant=assistant, enable_hotkey=not no_hotkey)
+    overlay_app.run()
+
+
 if __name__ == "__main__":
     app()

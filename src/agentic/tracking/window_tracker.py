@@ -146,8 +146,12 @@ class WindowTracker(ActivityTracker):
             pass
         return 0.0
     
-    def _get_active_window_macos(self) -> tuple[Optional[str], Optional[str]]:
-        """Get active window info on macOS using AppleScript."""
+    def _get_active_window_macos(self) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """Get active window info on macOS using AppleScript.
+        
+        Returns:
+            Tuple of (app_name, window_title, url)
+        """
         # First get the app name
         app_script = '''
         tell application "System Events"
@@ -165,33 +169,116 @@ class WindowTracker(ActivityTracker):
             )
             
             if result.returncode != 0:
-                return None, None
+                return None, None, None
             
             app_name = result.stdout.strip()
             
             if not app_name:
-                return None, None
+                return None, None, None
             
-            # Now try to get the window title
+            # Now try to get the window title and URL
             window_title = None
+            url = None
             
             # Try different methods based on the app
-            if app_name in ["Google Chrome", "Brave Browser"]:
-                title_script = f'''
-                tell application "{app_name}"
-                    set windowTitle to title of active tab of front window
+            if app_name == "Google Chrome":
+                # Get both title and URL from Chrome
+                chrome_script = '''
+                tell application "Google Chrome"
+                    set tabTitle to title of active tab of front window
+                    set tabURL to URL of active tab of front window
+                    return tabTitle & "|||" & tabURL
                 end tell
-                return windowTitle
                 '''
+                try:
+                    chrome_result = subprocess.run(
+                        ["osascript", "-e", chrome_script],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if chrome_result.returncode == 0:
+                        output = chrome_result.stdout.strip()
+                        if "|||" in output:
+                            parts = output.split("|||")
+                            window_title = parts[0]
+                            url = parts[1] if len(parts) > 1 else None
+                except Exception:
+                    pass
+                    
+            elif app_name == "Brave Browser":
+                brave_script = '''
+                tell application "Brave Browser"
+                    set tabTitle to title of active tab of front window
+                    set tabURL to URL of active tab of front window
+                    return tabTitle & "|||" & tabURL
+                end tell
+                '''
+                try:
+                    brave_result = subprocess.run(
+                        ["osascript", "-e", brave_script],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if brave_result.returncode == 0:
+                        output = brave_result.stdout.strip()
+                        if "|||" in output:
+                            parts = output.split("|||")
+                            window_title = parts[0]
+                            url = parts[1] if len(parts) > 1 else None
+                except Exception:
+                    pass
+                    
             elif app_name == "Safari":
-                title_script = '''
+                safari_script = '''
                 tell application "Safari"
-                    set windowTitle to name of front document
+                    set docName to name of front document
+                    set docURL to URL of front document
+                    return docName & "|||" & docURL
                 end tell
-                return windowTitle
                 '''
+                try:
+                    safari_result = subprocess.run(
+                        ["osascript", "-e", safari_script],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if safari_result.returncode == 0:
+                        output = safari_result.stdout.strip()
+                        if "|||" in output:
+                            parts = output.split("|||")
+                            window_title = parts[0]
+                            url = parts[1] if len(parts) > 1 else None
+                except Exception:
+                    pass
+                    
+            elif app_name == "Arc":
+                arc_script = '''
+                tell application "Arc"
+                    set tabTitle to title of active tab of front window
+                    set tabURL to URL of active tab of front window
+                    return tabTitle & "|||" & tabURL
+                end tell
+                '''
+                try:
+                    arc_result = subprocess.run(
+                        ["osascript", "-e", arc_script],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if arc_result.returncode == 0:
+                        output = arc_result.stdout.strip()
+                        if "|||" in output:
+                            parts = output.split("|||")
+                            window_title = parts[0]
+                            url = parts[1] if len(parts) > 1 else None
+                except Exception:
+                    pass
             else:
-                # Generic window title
+                # Generic window title for other apps
                 title_script = f'''
                 tell application "System Events"
                     tell process "{app_name}"
@@ -200,25 +287,24 @@ class WindowTracker(ActivityTracker):
                 end tell
                 return windowTitle
                 '''
+                try:
+                    title_result = subprocess.run(
+                        ["osascript", "-e", title_script],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if title_result.returncode == 0:
+                        window_title = title_result.stdout.strip()
+                except Exception:
+                    pass
             
-            try:
-                title_result = subprocess.run(
-                    ["osascript", "-e", title_script],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                if title_result.returncode == 0:
-                    window_title = title_result.stdout.strip()
-            except Exception:
-                pass
-            
-            return app_name, window_title
+            return app_name, window_title, url
             
         except Exception:
             pass
         
-        return None, None
+        return None, None, None
     
     def _get_active_window_linux(self) -> tuple[Optional[str], Optional[str]]:
         """Get active window info on Linux using xdotool."""
@@ -262,15 +348,20 @@ class WindowTracker(ActivityTracker):
         
         return None, None
     
-    def _get_active_window(self) -> tuple[Optional[str], Optional[str]]:
-        """Get active window info based on OS."""
+    def _get_active_window(self) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """Get active window info based on OS.
+        
+        Returns:
+            Tuple of (app_name, window_title, url)
+        """
         if self._system == "Darwin":
             return self._get_active_window_macos()
         elif self._system == "Linux":
-            return self._get_active_window_linux()
+            app, title = self._get_active_window_linux()
+            return app, title, None
         else:
             # Windows - would need pywin32
-            return None, None
+            return None, None, None
     
     def _get_idle_time(self) -> float:
         """Get system idle time based on OS."""
@@ -283,7 +374,7 @@ class WindowTracker(ActivityTracker):
         """Poll for active window changes."""
         while self._running:
             try:
-                app_name, window_title = self._get_active_window()
+                app_name, window_title, url = self._get_active_window()
                 idle_time = self._get_idle_time()
                 now = datetime.now()
                 
@@ -320,6 +411,7 @@ class WindowTracker(ActivityTracker):
                         category=category,
                         timestamp=now,
                         title=window_title,
+                        url=url,
                         duration_seconds=duration,
                         metadata={
                             "previous_app": self._last_app,
@@ -358,7 +450,7 @@ class WindowTracker(ActivityTracker):
     
     async def get_current_activity(self) -> Optional[ActivityEvent]:
         """Get current active window."""
-        app_name, window_title = self._get_active_window()
+        app_name, window_title, url = self._get_active_window()
         
         if not app_name:
             return None
@@ -369,4 +461,5 @@ class WindowTracker(ActivityTracker):
             category=self._get_category(app_name),
             timestamp=datetime.now(),
             title=window_title,
+            url=url,
         )
