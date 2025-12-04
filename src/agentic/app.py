@@ -239,8 +239,9 @@ class Assistant(LoggerMixin):
     def _is_activity_question(self, message: str) -> bool:
         """Check if the message is asking about user's activity."""
         activity_keywords = [
-            "what am i working on",
+            "what am i working",
             "what am i doing",
+            "what am i building",
             "what did i search",
             "what files",
             "what have i been",
@@ -250,6 +251,11 @@ class Assistant(LoggerMixin):
             "recent activity",
             "today's summary",
             "what project",
+            "check what i",
+            "show my activity",
+            "current project",
+            "what code",
+            "which files",
         ]
         message_lower = message.lower()
         return any(kw in message_lower for kw in activity_keywords)

@@ -89,11 +89,27 @@ async def main(
             "trackers": [t.name for t in aggregator.trackers if t.is_running],
         })
     
+    async def handle_ask(request):
+        """Answer questions about activity."""
+        data = await request.json()
+        question = data.get("question", "")
+        if not question:
+            return web.json_response({"error": "question required"}, status=400)
+        answer = await aggregator.answer_activity_question(question)
+        return web.json_response({"answer": answer})
+    
+    async def handle_work_context(request):
+        """Get rich work context for LLM."""
+        context = await aggregator.context_builder.get_work_context_for_llm()
+        return web.json_response({"context": context})
+    
     app = web.Application()
     app.router.add_get("/context", handle_context)
     app.router.add_get("/summary", handle_summary)
     app.router.add_get("/events", handle_events)
     app.router.add_get("/health", handle_health)
+    app.router.add_post("/ask", handle_ask)
+    app.router.add_get("/work-context", handle_work_context)
     
     runner = web.AppRunner(app)
     await runner.setup()

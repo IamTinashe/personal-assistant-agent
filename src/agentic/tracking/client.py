@@ -122,7 +122,24 @@ class ActivityTrackerClient(LoggerMixin):
         return "\n".join(lines)
     
     async def answer_activity_question(self, question: str) -> Optional[str]:
-        """Answer questions about user's activity."""
+        """Answer questions about user's activity by querying the daemon."""
+        if not await self.is_available():
+            return None
+        
+        try:
+            # Use the daemon's /ask endpoint for intelligent answers
+            client = await self._get_client()
+            response = await client.post(
+                f"{self.base_url}/ask",
+                json={"question": question},
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("answer")
+        except Exception as e:
+            self.logger.warning(f"Failed to ask activity question: {e}")
+        
+        # Fallback to local processing
         context = await self.get_context()
         
         if not context.get("tracking", True):
@@ -131,7 +148,7 @@ class ActivityTrackerClient(LoggerMixin):
         question_lower = question.lower()
         
         # What am I working on?
-        if any(w in question_lower for w in ["working on", "doing", "current"]):
+        if any(w in question_lower for w in ["working on", "doing", "current", "building"]):
             parts = []
             if context.get("current_activity"):
                 act = context["current_activity"]
@@ -139,8 +156,12 @@ class ActivityTrackerClient(LoggerMixin):
                 if act.get("title"):
                     parts.append(f"({act['title']})")
             
-            if context.get("current_project"):
-                parts.append(f"Project: {context['current_project']}")
+            if context.get("project_info"):
+                proj = context["project_info"]
+                if proj.get("project_name"):
+                    parts.append(f"Project: {proj['project_name']}")
+                if proj.get("frameworks"):
+                    parts.append(f"Stack: {', '.join(proj['frameworks'])}")
             
             if context.get("recent_files"):
                 from pathlib import Path
@@ -169,6 +190,22 @@ class ActivityTrackerClient(LoggerMixin):
             return summary.get("text", "No summary available.")
         
         return None
+    
+    async def get_work_context(self) -> str:
+        """Get rich work context for LLM prompt."""
+        if not await self.is_available():
+            return ""
+        
+        try:
+            client = await self._get_client()
+            response = await client.get(f"{self.base_url}/work-context")
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("context", "")
+        except Exception as e:
+            self.logger.warning(f"Failed to get work context: {e}")
+        
+        return ""
     
     async def close(self) -> None:
         """Close the HTTP client."""

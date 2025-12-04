@@ -5,7 +5,7 @@ import json
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from agentic.tracking.base import (
     ActivityEvent,
@@ -16,6 +16,7 @@ from agentic.tracking.base import (
 from agentic.tracking.browser_tracker import BrowserTracker
 from agentic.tracking.window_tracker import WindowTracker
 from agentic.tracking.vscode_tracker import VSCodeTracker
+from agentic.tracking.context_builder import ContextBuilder, ProjectDetector
 
 
 class ActivityAggregator:
@@ -28,6 +29,8 @@ class ActivityAggregator:
         enable_window: bool = True,
         enable_vscode: bool = True,
         max_events_in_memory: int = 1000,
+        memory_store_callback: Optional[Callable] = None,
+        memory_search_callback: Optional[Callable] = None,
     ):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -35,6 +38,15 @@ class ActivityAggregator:
         self._events: list[ActivityEvent] = []
         self._max_events = max_events_in_memory
         self._running = False
+        
+        # Initialize context builder
+        self.context_builder = ContextBuilder(
+            memory_store_callback=memory_store_callback,
+            memory_search_callback=memory_search_callback,
+        )
+        
+        # Background context update task
+        self._context_task: Optional[asyncio.Task] = None
         
         # Initialize trackers
         self.trackers = []
@@ -113,10 +125,59 @@ class ActivityAggregator:
         
         for tracker in self.trackers:
             await tracker.start()
+        
+        # Start background context updater
+        self._context_task = asyncio.create_task(self._update_context_periodically())
+    
+    async def _update_context_periodically(self) -> None:
+        """Periodically update work context."""
+        while self._running:
+            try:
+                await self._refresh_context()
+            except Exception:
+                pass
+            await asyncio.sleep(30)  # Update every 30 seconds
+    
+    async def _refresh_context(self) -> None:
+        """Refresh the current work context."""
+        # Get recent files
+        recent_files = []
+        if self.vscode_tracker:
+            recent_files = await self.vscode_tracker.get_files_worked_on_today()
+        
+        # Get current app
+        current_app = None
+        if self.window_tracker:
+            activity = await self.window_tracker.get_current_activity()
+            if activity:
+                current_app = activity.application
+        
+        # Get recent searches
+        recent_searches = []
+        if self.browser_tracker:
+            recent_searches = await self.browser_tracker.get_recent_searches(minutes=60)
+        
+        # Update context builder
+        await self.context_builder.update_context(
+            recent_files=recent_files,
+            current_app=current_app,
+            recent_searches=recent_searches,
+        )
+        
+        # Periodically store in memory
+        await self.context_builder.store_context_in_memory()
     
     async def stop(self) -> None:
         """Stop all activity trackers."""
         self._running = False
+        
+        # Stop context updater
+        if self._context_task:
+            self._context_task.cancel()
+            try:
+                await self._context_task
+            except asyncio.CancelledError:
+                pass
         
         for tracker in self.trackers:
             await tracker.stop()
@@ -210,6 +271,9 @@ class ActivityAggregator:
     
     async def get_current_context(self) -> dict[str, Any]:
         """Get current activity context for the AI assistant."""
+        # Refresh context first
+        await self._refresh_context()
+        
         context = {
             "timestamp": datetime.now().isoformat(),
             "current_activity": None,
@@ -217,6 +281,7 @@ class ActivityAggregator:
             "recent_searches": [],
             "recent_urls": [],
             "current_project": None,
+            "project_info": self.context_builder.current_context.get("project", {}),
             "summary": None,
         }
         
@@ -255,11 +320,9 @@ class ActivityAggregator:
             for e in recent_events if e.url
         ]
         
-        # Get summary
-        summary = self.get_summary(
-            since=datetime.now() - timedelta(hours=1),
-        )
-        context["summary"] = summary.to_natural_language()
+        # Get rich summary from context builder
+        context["summary"] = self.context_builder._generate_summary()
+        context["work_context"] = await self.context_builder.get_work_context_for_llm()
         
         return context
     
@@ -310,6 +373,14 @@ class ActivityAggregator:
     
     async def answer_activity_question(self, question: str) -> str:
         """Answer questions about user's activity."""
+        # Refresh context first
+        await self._refresh_context()
+        
+        # Try context builder first for rich answers
+        context_answer = await self.context_builder.answer_context_question(question)
+        if context_answer:
+            return context_answer
+        
         question_lower = question.lower()
         
         # What am I working on?
@@ -323,8 +394,11 @@ class ActivityAggregator:
                 if act["title"]:
                     parts.append(f"({act['title']})")
             
-            if context["current_project"]:
-                parts.append(f"Working on project: {context['current_project']}")
+            project_info = context.get("project_info", {})
+            if project_info.get("project_name"):
+                parts.append(f"Working on: {project_info['project_name']}")
+                if project_info.get("frameworks"):
+                    parts.append(f"Stack: {', '.join(project_info['frameworks'])}")
             
             if context["recent_files"]:
                 files = [Path(f).name for f in context["recent_files"][:3]]
@@ -356,5 +430,5 @@ class ActivityAggregator:
             )
             return summary.to_natural_language()
         
-        # Default: return general context
-        return self.get_context_for_prompt()
+        # Default: return work context
+        return await self.context_builder.get_work_context_for_llm() or self.get_context_for_prompt()
