@@ -24,7 +24,10 @@ A modular, privacy-focused personal assistant powered by OpenAI's GPT-4 and vect
 | 🧠 **Long-term Memory** | Vector store (FAISS local / Pinecone cloud) remembers conversations, facts, and preferences |
 | 🎯 **Smart Task Management** | Natural language reminders, tasks, and notes with date/time parsing |
 | 👁️ **Activity Tracking** | Monitors your browser, VS Code, and active windows to provide context-aware assistance |
+| 📺 **Vision Understanding** | GPT-4 Vision analyzes your screen, explains code, summarizes content, and helps debug errors |
+| 🖼️ **Floating Overlay** | Always-on-top chat widget (like Grammarly) that follows you everywhere |
 | 🗣️ **Voice Interface** | Optional Whisper STT and pyttsx3/ElevenLabs TTS |
+| 📋 **Clipboard Watching** | Auto-detects copied text and offers to explain or summarize |
 | 🔌 **Modular Skills** | Plugin architecture for adding custom capabilities |
 | 🌐 **REST & WebSocket API** | FastAPI server with streaming support |
 | 🖥️ **Rich CLI** | Beautiful terminal interface with real-time streaming |
@@ -243,6 +246,7 @@ User: "Remind me to call my daughter Sarah tomorrow at 6 PM"
 
 - Python 3.11 or higher
 - OpenAI API key
+- (Optional) Tesseract OCR for screen reading: `brew install tesseract`
 - (Optional) Pinecone API key for cloud vector storage
 
 ### Installation
@@ -253,13 +257,14 @@ git clone https://github.com/yourusername/agentic.git
 cd agentic
 
 # Create and activate virtual environment
-python -m venv .venv
-source .venv/bin/activate  # Linux/macOS
-# .venv\Scripts\activate   # Windows
+python -m venv venv
+source venv/bin/activate  # Linux/macOS
+# venv\Scripts\activate   # Windows
 
 # Install with desired features
 pip install -e .                  # Core only
 pip install -e ".[voice]"         # + Voice support
+pip install -e ".[overlay]"       # + Floating overlay (PyQt6)
 pip install -e ".[web]"           # + API server
 pip install -e ".[cloud]"         # + Pinecone
 pip install -e ".[all]"           # Everything
@@ -326,6 +331,103 @@ agentic chat
 
 Now you can ask things like "What am I working on?" and get contextual answers!
 
+## 🖼️ Floating Overlay (Recommended)
+
+The overlay is a beautiful floating chat widget that stays on top of all windows - like Grammarly but for AI assistance.
+
+### Running the Overlay
+
+```bash
+# Make sure you have the overlay dependencies
+pip install -e ".[overlay]"
+
+# Set your OpenAI API key
+export OPENAI_API_KEY=sk-your-key-here
+# Or load from .env file
+export $(grep -v '^#' .env | xargs)
+
+# Launch the overlay
+./venv/bin/python -m agentic.cli overlay
+
+# If you get hotkey permission errors on macOS, use:
+./venv/bin/python -m agentic.cli overlay --no-hotkey
+
+# Demo mode (no assistant, for testing UI)
+./venv/bin/python -m agentic.cli overlay --demo
+```
+
+### Overlay Features
+
+| Feature | Description |
+|---------|-------------|
+| 🤖 **Always-on-top** | Floating window that follows you everywhere |
+| 📋 **Clipboard watching** | Auto-detects copied text, offers to explain/summarize |
+| ⌨️ **Global hotkey** | `Cmd+Shift+Space` to show/hide (requires Accessibility permission) |
+| 🔄 **Minimize** | Click minimize to shrink to a small floating button |
+| 📺 **System tray** | Quick actions from the menu bar |
+
+### Vision-Powered Questions
+
+With the overlay, you can ask questions about your screen:
+
+```
+# Ask about what's visible
+"What's going on on my screen?"
+"Can you see what I'm working on?"
+"Help me understand this"
+
+# Get code explanations
+"What does this code do?"
+"Explain this code"
+
+# Debug errors
+"What's wrong here?"
+"Help me fix this error"
+"Debug this"
+
+# Summarize content
+"Summarize what's on my screen"
+"What is this about?"
+```
+
+The assistant uses GPT-4 Vision to capture and analyze your screen in real-time!
+
+## 📺 Vision & Screen Understanding
+
+Agentic can see and understand your screen using GPT-4 Vision.
+
+### Capabilities
+
+| Feature | What it does |
+|---------|--------------|
+| **Screen Analysis** | Captures screenshot and describes what's happening |
+| **Code Explanation** | Reads and explains visible code |
+| **Error Detection** | Finds and explains errors on screen |
+| **Content Summary** | Summarizes any visible text/content |
+| **Context Awareness** | Understands what app you're in, what you're doing |
+
+### Example Interactions
+
+```
+You: "What's going on on my screen?"
+Assistant: "You're working in Visual Studio Code on a Python project. 
+           The file 'aggregator.py' is open, showing a class called 
+           ActivityAggregator. There's also a terminal running at the 
+           bottom with some test output."
+
+You: "What does this code do?"
+Assistant: "The code defines an async method 'answer_activity_question' 
+           that analyzes user questions about their activity. It checks 
+           for vision-related keywords and uses GPT-4 Vision to analyze 
+           the screen when needed..."
+
+You: "Is there an error?"
+Assistant: "Yes, I can see a TypeError in the terminal output. The error 
+           says 'NoneType has no attribute get'. This usually means you're 
+           trying to access a dictionary key on a None value. Check line 
+           45 where you call 'data.get()' - make sure 'data' isn't None."
+```
+
 ## 💻 Usage Examples
 
 ### CLI Interface
@@ -348,6 +450,12 @@ agentic recall "family birthdays"
 
 # Start API server
 agentic serve --port 8000
+
+# Launch floating overlay
+agentic overlay
+
+# Overlay without global hotkey
+agentic overlay --no-hotkey
 ```
 
 ### Python SDK
@@ -635,6 +743,10 @@ agentic/
 │   │   ├── __init__.py
 │   │   └── orchestrator.py     # Skill coordination
 │   │
+│   ├── overlay/                # Floating overlay UI
+│   │   ├── __init__.py
+│   │   └── app.py              # PyQt6 overlay application
+│   │
 │   ├── preprocessing/          # Input processing
 │   │   ├── __init__.py
 │   │   ├── preprocessor.py     # Intent & entity extraction
@@ -647,12 +759,15 @@ agentic/
 │   │   ├── tasks.py            # Task management
 │   │   └── notes.py            # Note taking
 │   │
-│   ├── tracking/               # Activity tracking
+│   ├── tracking/               # Activity & screen tracking
 │   │   ├── __init__.py
 │   │   ├── base.py             # ActivityEvent, ActivityTracker base
 │   │   ├── browser_tracker.py  # Chrome, Safari, Firefox history
 │   │   ├── window_tracker.py   # Active window monitoring
 │   │   ├── vscode_tracker.py   # VS Code file tracking
+│   │   ├── screen_reader.py    # OCR screen reading (tesseract)
+│   │   ├── vision_analyzer.py  # GPT-4 Vision screen analysis
+│   │   ├── context_builder.py  # Build context from activity
 │   │   ├── aggregator.py       # Combines all trackers
 │   │   └── client.py           # Client for Docker→Host communication
 │   │

@@ -285,6 +285,35 @@ class Assistant(LoggerMixin):
             "what does it say",
             "summarize screen",
             "describe screen",
+            # Vision/AI understanding keywords
+            "understand this",
+            "understand what",
+            "analyze screen",
+            "analyze this",
+            "explain what you see",
+            "explain what's on",
+            "what's happening",
+            "what is happening",
+            "what's going on",
+            "going on on my screen",
+            "summarize my screen",
+            "summarize the screen",
+            "help me understand",
+            "can you see this",
+            "can you see my",
+            "what do you see on",
+            "tell me about the screen",
+            "what is this",
+            # Error/debugging keywords
+            "fix this error",
+            "what's wrong",
+            "debug this",
+            "explain this error",
+            "help with error",
+            # Code explanation keywords
+            "explain this code",
+            "what does this code",
+            "explain code",
         ]
         message_lower = message.lower()
         return any(kw in message_lower for kw in activity_keywords)

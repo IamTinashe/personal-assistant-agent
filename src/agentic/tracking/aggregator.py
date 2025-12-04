@@ -18,6 +18,7 @@ from agentic.tracking.window_tracker import WindowTracker
 from agentic.tracking.vscode_tracker import VSCodeTracker
 from agentic.tracking.context_builder import ContextBuilder, ProjectDetector
 from agentic.tracking.screen_reader import ScreenReader, get_screen_reader
+from agentic.tracking.vision_analyzer import VisionAnalyzer, get_vision_analyzer
 
 
 class ActivityAggregator:
@@ -30,6 +31,7 @@ class ActivityAggregator:
         enable_window: bool = True,
         enable_vscode: bool = True,
         enable_screen_reader: bool = True,
+        enable_vision: bool = True,
         max_events_in_memory: int = 1000,
         memory_store_callback: Optional[Callable] = None,
         memory_search_callback: Optional[Callable] = None,
@@ -41,7 +43,9 @@ class ActivityAggregator:
         self._max_events = max_events_in_memory
         self._running = False
         self.enable_screen_reader = enable_screen_reader
+        self.enable_vision = enable_vision
         self._screen_reader: Optional[ScreenReader] = None
+        self._vision_analyzer: Optional[VisionAnalyzer] = None
         
         # Initialize context builder
         self.context_builder = ContextBuilder(
@@ -380,14 +384,69 @@ class ActivityAggregator:
         # Refresh context first
         await self._refresh_context()
         
-        # Try context builder first for rich answers
-        context_answer = await self.context_builder.answer_context_question(question)
-        if context_answer:
-            return context_answer
-        
         question_lower = question.lower()
         
-        # Read what's on screen / what am I seeing / what's on my screen
+        # Vision-based understanding - check FIRST for explicit vision requests
+        # Keywords like "understand", "analyze", "see", "happening" suggest visual analysis
+        vision_keywords = ["understand", "analyze screen", "explain what", "what's happening", 
+                          "describe screen", "tell me about the screen", "what do you see",
+                          "help me understand", "can you see", "analyze this", "what is this",
+                          "what's going on", "going on on my screen", "summarize my screen",
+                          "summarize the screen", "summarize screen"]
+        if any(w in question_lower for w in vision_keywords):
+            if self.enable_vision:
+                if not self._vision_analyzer:
+                    self._vision_analyzer = get_vision_analyzer()
+                try:
+                    # Use GPT-4 Vision to understand the screen
+                    analysis = await self._vision_analyzer.answer_about_screen(question)
+                    return analysis
+                except Exception as e:
+                    return f"Error analyzing screen with vision: {e}"
+            # Fall through to context-based answer if vision not enabled
+        
+        # Help with errors on screen
+        if any(w in question_lower for w in ["error", "issue", "bug", "fix this", "what's wrong", "debug"]):
+            if self.enable_vision:
+                if not self._vision_analyzer:
+                    self._vision_analyzer = get_vision_analyzer()
+                try:
+                    return await self._vision_analyzer.explain_error()
+                except Exception as e:
+                    return f"Error analyzing screen for errors: {e}"
+        
+        # Explain code on screen
+        if any(w in question_lower for w in ["explain code", "explain this code", "what does this code", "code do"]):
+            if self.enable_vision:
+                if not self._vision_analyzer:
+                    self._vision_analyzer = get_vision_analyzer()
+                try:
+                    return await self._vision_analyzer.explain_code()
+                except Exception as e:
+                    return f"Error analyzing code: {e}"
+        
+        # Summarize what's on screen - use vision for rich summary
+        if any(w in question_lower for w in ["summarize screen", "summarize what's on", "give me a summary of the screen"]):
+            if self.enable_vision:
+                if not self._vision_analyzer:
+                    self._vision_analyzer = get_vision_analyzer()
+                try:
+                    summary = await self._vision_analyzer.summarize_screen()
+                    return summary
+                except Exception as e:
+                    return f"Error summarizing screen: {e}"
+            # Fall back to OCR
+            if self.enable_screen_reader:
+                if not self._screen_reader:
+                    self._screen_reader = get_screen_reader()
+                try:
+                    screen_text = await self._screen_reader.get_screen_summary(max_chars=2000)
+                    return f"**Screen Content (OCR):**\n{screen_text}"
+                except Exception:
+                    pass
+            return "Screen analysis not available."
+        
+        # Read what's on screen / what am I seeing / what's on my screen (use OCR for text extraction)
         if any(w in question_lower for w in ["see on", "seeing", "on my screen", "read screen", "what's on screen", 
                                                "screen shows", "looking at", "displayed", "showing"]):
             if self.enable_screen_reader:
