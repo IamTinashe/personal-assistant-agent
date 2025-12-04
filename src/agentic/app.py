@@ -17,6 +17,8 @@ from agentic.preprocessing.preprocessor import InputPreprocessor, IntentType
 from agentic.skills.notes import NotesSkill
 from agentic.skills.reminder import ReminderSkill
 from agentic.skills.tasks import TaskSkill
+from agentic.tracking.aggregator import ActivityAggregator
+from agentic.tracking.client import ActivityTrackerClient
 
 
 class Assistant(LoggerMixin):
@@ -48,9 +50,11 @@ class Assistant(LoggerMixin):
         self,
         settings: Settings | None = None,
         enable_voice: bool = False,
+        enable_activity_tracking: bool = True,
     ) -> None:
         self.settings = settings or get_settings()
         self.enable_voice = enable_voice
+        self.enable_activity_tracking = enable_activity_tracking
         
         # Core components
         self._preprocessor: InputPreprocessor | None = None
@@ -59,6 +63,10 @@ class Assistant(LoggerMixin):
         self._memory: MemoryManager | None = None
         self._context: ContextManager | None = None
         self._response_generator: ResponseGenerator | None = None
+        
+        # Activity tracking
+        self._activity: ActivityAggregator | None = None
+        self._activity_client: ActivityTrackerClient | None = None
         
         # Voice components (optional)
         self._stt = None
@@ -116,6 +124,10 @@ class Assistant(LoggerMixin):
         if self.enable_voice:
             await self._init_voice()
         
+        # Initialize activity tracking if enabled
+        if self.enable_activity_tracking:
+            await self._init_activity_tracking()
+        
         self._initialized = True
         self.logger.info("Assistant initialized successfully")
 
@@ -131,6 +143,38 @@ class Assistant(LoggerMixin):
         await self._tts.initialize()
         
         self.logger.info("Voice I/O initialized")
+
+    async def _init_activity_tracking(self) -> None:
+        """Initialize activity tracking components."""
+        import os
+        
+        # Check if running in Docker
+        in_docker = os.path.exists("/.dockerenv") or os.environ.get("DOCKER_CONTAINER")
+        
+        if in_docker:
+            # Use client to connect to external tracker daemon
+            self._activity_client = ActivityTrackerClient(
+                host="host.docker.internal",
+                port=8001,
+            )
+            if await self._activity_client.is_available():
+                self.logger.info("Connected to external activity tracker")
+            else:
+                self.logger.warning(
+                    "Activity tracker not available. "
+                    "Run './run_tracker.sh' on host machine."
+                )
+        else:
+            # Run tracker directly (local development)
+            data_dir = self.settings.vector_store_path.parent / "activity"
+            self._activity = ActivityAggregator(
+                data_dir=str(data_dir),
+                enable_browser=True,
+                enable_window=True,
+                enable_vscode=True,
+            )
+            await self._activity.start()
+            self.logger.info("Activity tracking initialized")
 
     async def chat(
         self,
@@ -157,25 +201,75 @@ class Assistant(LoggerMixin):
             f"(intent: {preprocessed.intent.value})"
         )
         
+        # Check if this is an activity-related question
+        if self._is_activity_question(message):
+            activity_response = await self._get_activity_answer(message)
+            if activity_response:
+                # If streaming requested, wrap in async generator
+                if stream:
+                    async def _stream_activity():
+                        yield activity_response
+                    return _stream_activity()
+                return activity_response
+        
         # Try task orchestrator first
         handled, skill_result = await self._orchestrator.process(preprocessed)
+        
+        # Get activity context for LLM
+        activity_context = await self._get_activity_context_for_prompt()
         
         # Generate response
         if handled and skill_result and not skill_result.should_respond:
             # Skill provided complete response
             response = skill_result.message
         else:
-            # Generate LLM response
+            # Generate LLM response with activity context
             response = await self._response_generator.generate_response(
                 preprocessed=preprocessed,
                 skill_result=skill_result if handled else None,
                 stream=stream,
+                additional_context=activity_context,
             )
         
         if not stream:
             self.logger.debug(f"Response: {response[:100]}...")
         
         return response
+
+    def _is_activity_question(self, message: str) -> bool:
+        """Check if the message is asking about user's activity."""
+        activity_keywords = [
+            "what am i working on",
+            "what am i doing",
+            "what did i search",
+            "what files",
+            "what have i been",
+            "my activity",
+            "what sites",
+            "what websites",
+            "recent activity",
+            "today's summary",
+            "what project",
+        ]
+        message_lower = message.lower()
+        return any(kw in message_lower for kw in activity_keywords)
+
+    async def _get_activity_answer(self, message: str) -> str | None:
+        """Get answer to activity-related question."""
+        if self._activity:
+            return await self._activity.answer_activity_question(message)
+        elif self._activity_client:
+            return await self._activity_client.answer_activity_question(message)
+        return None
+
+    async def _get_activity_context_for_prompt(self) -> str | None:
+        """Get activity context for LLM prompt."""
+        if self._activity:
+            return self._activity.get_context_for_prompt()
+        elif self._activity_client:
+            context = await self._activity_client.get_context()
+            return self._activity_client.get_context_for_prompt(context)
+        return None
 
     async def chat_voice(self) -> str:
         """
@@ -251,10 +345,45 @@ class Assistant(LoggerMixin):
         """Get assistant statistics."""
         self._ensure_initialized()
         
-        return {
+        stats = {
             "memory": await self._memory.get_stats(),
             "skills": self._orchestrator.list_skills(),
         }
+        
+        if self._activity:
+            context = await self._activity.get_current_context()
+            stats["activity"] = {
+                "current": context.get("current_activity"),
+                "files_today": len(context.get("recent_files", [])),
+                "tracking": True,
+            }
+        
+        return stats
+
+    async def get_activity_context(self) -> dict[str, Any]:
+        """Get current activity context."""
+        self._ensure_initialized()
+        
+        if self._activity:
+            return await self._activity.get_current_context()
+        elif self._activity_client:
+            return await self._activity_client.get_context()
+        return {"tracking": False}
+
+    async def get_activity_summary(self, hours: int = 1) -> str:
+        """Get activity summary for the past N hours."""
+        self._ensure_initialized()
+        
+        if self._activity:
+            from datetime import datetime, timedelta
+            summary = self._activity.get_summary(
+                since=datetime.now() - timedelta(hours=hours),
+            )
+            return summary.to_natural_language()
+        elif self._activity_client:
+            result = await self._activity_client.get_summary(hours=hours)
+            return result.get("text", "Activity tracker not available.")
+        return "Activity tracking not enabled."
 
     async def shutdown(self) -> None:
         """Shutdown the assistant and release resources."""
@@ -262,6 +391,12 @@ class Assistant(LoggerMixin):
             return
         
         self.logger.info("Shutting down assistant...")
+        
+        # Stop activity tracking
+        if self._activity:
+            await self._activity.stop()
+        if self._activity_client:
+            await self._activity_client.close()
         
         # Save memory
         if self._memory:

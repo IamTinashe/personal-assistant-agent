@@ -23,6 +23,7 @@ A modular, privacy-focused personal assistant powered by OpenAI's GPT-4 and vect
 |---------|-------------|
 | 🧠 **Long-term Memory** | Vector store (FAISS local / Pinecone cloud) remembers conversations, facts, and preferences |
 | 🎯 **Smart Task Management** | Natural language reminders, tasks, and notes with date/time parsing |
+| 👁️ **Activity Tracking** | Monitors your browser, VS Code, and active windows to provide context-aware assistance |
 | 🗣️ **Voice Interface** | Optional Whisper STT and pyttsx3/ElevenLabs TTS |
 | 🔌 **Modular Skills** | Plugin architecture for adding custom capabilities |
 | 🌐 **REST & WebSocket API** | FastAPI server with streaming support |
@@ -43,52 +44,154 @@ A modular, privacy-focused personal assistant powered by OpenAI's GPT-4 and vect
           │                │                │                │
           └────────────────┴────────────────┴────────────────┘
                                     │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           ASSISTANT CORE                                     │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                        Input Preprocessor                            │   │
-│  │  • Intent Detection (20+ intent types)                               │   │
-│  │  • Entity Extraction (dates, times, durations, quoted text)          │   │
-│  │  • Text Normalization                                                │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                        │
-│                    ┌───────────────┴───────────────┐                       │
-│                    ▼                               ▼                        │
-│  ┌─────────────────────────────┐  ┌─────────────────────────────────────┐  │
-│  │     Task Orchestrator       │  │         Context Manager              │  │
-│  │  ┌───────────────────────┐  │  │  • Builds conversation context       │  │
-│  │  │  Skill Router         │  │  │  • Retrieves relevant memories       │  │
-│  │  │  • Reminder Skill     │  │  │  • Manages token limits              │  │
-│  │  │  • Task Skill         │  │  │  • Session state tracking            │  │
-│  │  │  • Notes Skill        │  │  └─────────────────────────────────────┘  │
-│  │  │  • Custom Skills...   │  │                    │                      │
-│  │  └───────────────────────┘  │                    │                      │
-│  └──────────────┬──────────────┘                    │                      │
-│                 │                                   │                      │
-│                 └───────────────┬───────────────────┘                      │
-│                                 ▼                                          │
-│  ┌─────────────────────────────────────────────────────────────────────┐  │
-│  │                      Response Generator                              │  │
-│  │  • Combines skill results with LLM responses                         │  │
-│  │  • Handles streaming output                                          │  │
-│  │  • Extracts facts for memory storage                                 │  │
-│  └─────────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    │
           ┌─────────────────────────┼─────────────────────────┐
+          │                         │                         │
           ▼                         ▼                         ▼
 ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐
-│   OpenAI Client     │  │   Memory Manager    │  │   Voice Engine      │
-│  ┌───────────────┐  │  │  ┌───────────────┐  │  │  ┌───────────────┐  │
-│  │ GPT-4 Turbo   │  │  │  │ FAISS Store   │  │  │  │ Whisper STT   │  │
-│  │ Embeddings    │  │  │  │ (Local)       │  │  │  │ pyttsx3 TTS   │  │
-│  │ Retry Logic   │  │  │  ├───────────────┤  │  │  │ ElevenLabs    │  │
-│  │ Streaming     │  │  │  │ Pinecone      │  │  │  │ Audio Record  │  │
-│  └───────────────┘  │  │  │ (Cloud)       │  │  │  └───────────────┘  │
-└─────────────────────┘  │  └───────────────┘  │  └─────────────────────┘
-                         └─────────────────────┘
+│  Activity Tracker   │  │    ASSISTANT CORE   │  │   Voice Engine      │
+│  ┌───────────────┐  │  │                     │  │  ┌───────────────┐  │
+│  │ Browser       │  │  │  Input Preprocessor │  │  │ Whisper STT   │  │
+│  │ History       │  │  │  Task Orchestrator  │  │  │ pyttsx3 TTS   │  │
+│  ├───────────────┤  │  │  Context Manager    │  │  │ Audio Record  │  │
+│  │ Active Window │  │  │  Response Generator │  │  └───────────────┘  │
+│  │ Monitoring    │  │  │                     │  └─────────────────────┘
+│  ├───────────────┤  │  └──────────┬──────────┘
+│  │ VS Code       │  │             │
+│  │ File Tracking │  │             │
+│  └───────────────┘  │             │
+└──────────┬──────────┘             │
+           │                        │
+           └────────────┬───────────┘
+                        │
+          ┌─────────────┼─────────────┐
+          ▼             ▼             ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│  OpenAI Client  │  │ Memory Manager  │  │   Skills        │
+│  ┌───────────┐  │  │  ┌───────────┐  │  │  ┌───────────┐  │
+│  │ GPT-4     │  │  │  │ FAISS     │  │  │  │ Reminder  │  │
+│  │ Embeddings│  │  │  │ (Local)   │  │  │  │ Tasks     │  │
+│  │ Streaming │  │  │  ├───────────┤  │  │  │ Notes     │  │
+│  └───────────┘  │  │  │ Pinecone  │  │  │  │ Custom... │  │
+└─────────────────┘  │  │ (Cloud)   │  │  │  └───────────┘  │
+                     │  └───────────┘  │  └─────────────────┘
+                     └─────────────────┘
 ```
+
+## 👁️ Activity Tracking
+
+Agentic can monitor your computer activity to provide context-aware assistance. It tracks:
+
+| Tracker | What it monitors | Data collected |
+|---------|------------------|----------------|
+| **Browser** | Chrome, Safari, Firefox, Brave, Edge | URLs visited, page titles, search queries |
+| **Window** | Active application & window | App name, window title, focus duration |
+| **VS Code** | Files and projects | Recently edited files, current project |
+
+### How It Works
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    HOST MACHINE                                  │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │              Activity Tracker Daemon                        │ │
+│  │  ./run_tracker.sh (runs outside Docker)                    │ │
+│  │                                                             │ │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐          │ │
+│  │  │  Browser    │ │   Window    │ │   VS Code   │          │ │
+│  │  │  Tracker    │ │   Tracker   │ │   Tracker   │          │ │
+│  │  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘          │ │
+│  │         └───────────────┼───────────────┘                  │ │
+│  │                         ▼                                   │ │
+│  │              ┌─────────────────────┐                       │ │
+│  │              │ Activity Aggregator │                       │ │
+│  │              │   API on :8001      │                       │ │
+│  │              └──────────┬──────────┘                       │ │
+│  └─────────────────────────┼──────────────────────────────────┘ │
+│                            │                                     │
+│  ┌─────────────────────────┼──────────────────────────────────┐ │
+│  │         Docker Container (Assistant API :8000)              │ │
+│  │                         │                                   │ │
+│  │              ┌──────────▼──────────┐                       │ │
+│  │              │ Activity Client     │                       │ │
+│  │              │ (connects via       │                       │ │
+│  │              │ host.docker.internal)│                      │ │
+│  │              └─────────────────────┘                       │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Setup Activity Tracking
+
+**Step 1: Start the Activity Tracker Daemon (on host machine)**
+
+```bash
+# Make executable (first time only)
+chmod +x run_tracker.sh
+
+# Run the tracker daemon
+./run_tracker.sh
+```
+
+This starts a local service on port 8001 that monitors your activity.
+
+**Step 2: Start the Assistant (in Docker or locally)**
+
+```bash
+# Docker (recommended)
+docker-compose up -d
+
+# Or locally
+agentic chat
+```
+
+The assistant will automatically connect to the tracker daemon.
+
+### Activity-Aware Queries
+
+Once tracking is enabled, you can ask context-aware questions:
+
+```bash
+# Ask what you're working on
+You: "What am I working on right now?"
+Assistant: "You're in VS Code working on app.py in the agentic project. 
+           Recent files: app.py, tracker.py, README.md"
+
+# Ask about your searches
+You: "What did I search for today?"
+Assistant: "Recent searches: python asyncio tutorial, fastapi websockets, 
+           docker compose networking"
+
+# Get activity summary
+You: "Give me a summary of my day"
+Assistant: "Activity summary from 09:00 to 17:00:
+           - Total active time: 6.5 hours
+           - Top apps: VS Code (4h), Chrome (1.5h), Slack (1h)
+           - Files: app.py, config.py, README.md
+           - Searches: docker networking, python async"
+
+# Ask about websites visited
+You: "What documentation sites have I been on?"
+Assistant: "You've visited: docs.python.org, fastapi.tiangolo.com, 
+           developer.mozilla.org in the last hour"
+```
+
+### Privacy & Security
+
+- **Local only**: All tracking data stays on your machine
+- **No cloud sync**: Activity data is never sent to external servers
+- **Configurable**: Enable/disable individual trackers
+- **Transparent**: All tracked data is stored in `./data/activity/`
+
+### Activity Tracker API
+
+When running, the tracker exposes these endpoints on `http://localhost:8001`:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Health check |
+| `GET /context` | Current activity context |
+| `GET /summary?hours=1` | Activity summary |
+| `GET /events?limit=50` | Recent activity events |
 
 ### Data Flow Example
 
@@ -205,6 +308,23 @@ agentic chat
 # Or run with a single message
 agentic chat "Hello! What can you help me with?"
 ```
+
+### With Activity Tracking (Recommended)
+
+For the full experience with context-aware assistance:
+
+```bash
+# Terminal 1: Start the activity tracker (on host machine)
+./run_tracker.sh
+
+# Terminal 2: Start the assistant
+docker-compose up -d
+
+# Or for local development
+agentic chat
+```
+
+Now you can ask things like "What am I working on?" and get contextual answers!
 
 ## 💻 Usage Examples
 
@@ -527,6 +647,15 @@ agentic/
 │   │   ├── tasks.py            # Task management
 │   │   └── notes.py            # Note taking
 │   │
+│   ├── tracking/               # Activity tracking
+│   │   ├── __init__.py
+│   │   ├── base.py             # ActivityEvent, ActivityTracker base
+│   │   ├── browser_tracker.py  # Chrome, Safari, Firefox history
+│   │   ├── window_tracker.py   # Active window monitoring
+│   │   ├── vscode_tracker.py   # VS Code file tracking
+│   │   ├── aggregator.py       # Combines all trackers
+│   │   └── client.py           # Client for Docker→Host communication
+│   │
 │   ├── voice/                  # Voice I/O
 │   │   ├── __init__.py
 │   │   ├── stt.py              # Speech-to-text
@@ -535,7 +664,8 @@ agentic/
 │   │
 │   ├── __init__.py
 │   ├── app.py                  # Main Assistant class
-│   └── cli.py                  # CLI application
+│   ├── cli.py                  # CLI application
+│   └── tracker_daemon.py       # Standalone activity tracker service
 │
 ├── tests/                      # Test suite
 │   ├── __init__.py
@@ -544,12 +674,18 @@ agentic/
 │   ├── test_memory.py
 │   └── test_skills.py
 │
+├── data/                       # Runtime data (gitignored)
+│   ├── activity/               # Activity tracking events
+│   ├── vector_store/           # FAISS index
+│   └── agentic.db              # SQLite database
+│
 ├── .env.example                # Environment template
 ├── .gitignore
 ├── docker-compose.yml          # Docker deployment
 ├── Dockerfile
 ├── LICENSE
 ├── pyproject.toml              # Project configuration
+├── run_tracker.sh              # Script to run activity tracker
 └── README.md
 ```
 
@@ -590,6 +726,10 @@ agentic/
 | `MAX_CONTEXT_TOKENS` | int | `2000` | Max context size |
 | `MEMORY_RETRIEVAL_COUNT` | int | `5` | Memories per query |
 | `CONVERSATION_HISTORY_LENGTH` | int | `10` | Recent exchanges kept |
+| **Activity Tracking** |
+| `ENABLE_ACTIVITY_TRACKING` | bool | `true` | Enable activity monitoring |
+| `ACTIVITY_TRACKER_HOST` | str | `host.docker.internal` | Tracker daemon host |
+| `ACTIVITY_TRACKER_PORT` | int | `8001` | Tracker daemon port |
 
 ## 🧪 Development
 

@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -15,15 +15,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     git \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy project files needed for installation
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
 
 # Install Python dependencies
-COPY pyproject.toml ./
 RUN pip install --upgrade pip && \
-    pip install -e ".[web]"
-
-# Copy application code
-COPY src/ ./src/
+    pip install ".[web]" && \
+    python -m spacy download en_core_web_sm
 
 # Create data directories
 RUN mkdir -p /app/data /app/logs

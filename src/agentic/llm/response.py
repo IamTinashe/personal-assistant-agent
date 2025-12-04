@@ -47,6 +47,7 @@ class ResponseGenerator(LoggerMixin):
         preprocessed: PreprocessedInput,
         skill_result: SkillResult | None = None,
         stream: bool = False,
+        additional_context: str | None = None,
     ) -> str | AsyncGenerator[str, None]:
         """
         Generate a response to user input.
@@ -55,6 +56,7 @@ class ResponseGenerator(LoggerMixin):
             preprocessed: The preprocessed user input.
             skill_result: Optional result from a skill execution.
             stream: Whether to stream the response.
+            additional_context: Optional additional context (e.g., activity tracking).
             
         Returns:
             str | AsyncGenerator: The response or a stream of chunks.
@@ -65,6 +67,10 @@ class ResponseGenerator(LoggerMixin):
         # If skill provided a result, enhance the context
         if skill_result and skill_result.response_hint:
             context.additional_context["skill_hint"] = skill_result.response_hint
+        
+        # Add activity context if provided
+        if additional_context:
+            context.additional_context["user_activity"] = additional_context
         
         # Get messages for API
         messages = context.to_messages()
